@@ -15,7 +15,7 @@ set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Arquiteturas do macOS")
 # Versão mínima do macOS suportada pelo plugin.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Versão mínima do macOS")
 
-project(MidiGate VERSION 1.0.0 LANGUAGES C CXX)
+project(MidiGatePlugins VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,6 +88,57 @@ target_compile_definitions(MidiGate
 )
 
 target_link_libraries(MidiGate
+    PRIVATE
+        juce::juce_audio_utils
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+# ==============================================================================
+#  AudioTrigger: o inverso do MidiGate.
+#  Escuta o áudio em tempo real e ENVIA MIDI (Note On / Note Off) quando o sinal
+#  passa de um limiar. Além da saída MIDI do plugin, cria uma porta MIDI virtual
+#  ("AudioTrigger Out") para DAWs que não encaminham a saída MIDI de plugins de
+#  áudio, como o Logic Pro.
+# ==============================================================================
+juce_add_plugin(AudioTrigger
+    COMPANY_NAME            "RegionalRJ"
+    PRODUCT_NAME            "AudioTrigger"
+    BUNDLE_ID               "com.regionalrj.audiotrigger"
+
+    PLUGIN_MANUFACTURER_CODE Rgrj
+    PLUGIN_CODE              Atrg
+
+    FORMATS                 ${MIDIGATE_FORMATS}
+
+    # Efeito de áudio comum (aufx) que PRODUZ MIDI.
+    IS_SYNTH                FALSE
+    NEEDS_MIDI_INPUT        FALSE
+    NEEDS_MIDI_OUTPUT       TRUE
+    IS_MIDI_EFFECT          FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+
+    AU_MAIN_TYPE            kAudioUnitType_Effect
+    VST3_CATEGORIES         Fx Analyzer
+
+    COPY_PLUGIN_AFTER_BUILD ${MIDIGATE_COPY_AFTER_BUILD}
+)
+
+target_sources(AudioTrigger
+    PRIVATE
+        AudioTrigger/Source/TriggerProcessor.cpp
+)
+
+target_compile_definitions(AudioTrigger
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+)
+
+target_link_libraries(AudioTrigger
     PRIVATE
         juce::juce_audio_utils
     PUBLIC

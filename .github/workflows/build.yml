@@ -20,15 +20,19 @@ jobs:
       - name: Compilar em Release
         run: cmake --build build --config Release
 
-      - name: Validar o Audio Unit (não bloqueia o build se falhar)
+      - name: Validar os Audio Units (não bloqueia o build se falhar)
         continue-on-error: true
-        run: auval -v aumf Mgat Rgrj
+        run: |
+          auval -v aumf Mgat Rgrj
+          auval -v aufx Atrg Rgrj
 
       - name: Compactar os plugins (ditto preserva os pacotes do macOS)
         run: |
           mkdir -p dist
           ditto -c -k --keepParent build/MidiGate_artefacts/Release/AU/MidiGate.component dist/MidiGate-AU.zip
           ditto -c -k --keepParent build/MidiGate_artefacts/Release/VST3/MidiGate.vst3 dist/MidiGate-VST3.zip
+          ditto -c -k --keepParent build/AudioTrigger_artefacts/Release/AU/AudioTrigger.component dist/AudioTrigger-AU.zip
+          ditto -c -k --keepParent build/AudioTrigger_artefacts/Release/VST3/AudioTrigger.vst3 dist/AudioTrigger-VST3.zip
 
       - name: Publicar os arquivos para download
         uses: actions/upload-artifact@v4
@@ -54,6 +58,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Compress-Archive -Path build/MidiGate_artefacts/Release/VST3/MidiGate.vst3 -DestinationPath dist/MidiGate-VST3-Windows.zip
+          Compress-Archive -Path build/AudioTrigger_artefacts/Release/VST3/AudioTrigger.vst3 -DestinationPath dist/AudioTrigger-VST3-Windows.zip
 
       - name: Publicar o arquivo para download
         uses: actions/upload-artifact@v4
