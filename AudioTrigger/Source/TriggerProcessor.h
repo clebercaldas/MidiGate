@@ -3,40 +3,45 @@
 
     AudioTrigger - TriggerProcessor.h
 
-    Detector de transientes em TEMPO REAL que envia MIDI.
+    Gate de áudio em TEMPO REAL que também ENVIA MIDI ao abrir e ao fechar.
+    O modelo é o ReaGate do Reaper (que não existe no Logic Pro).
 
     IDEIA GERAL
     -----------
-    É o inverso do MidiGate:
+    O sinal de entrada passa por um detector. Quando o nível passa do
+    "Threshold" o gate abre; quando cai abaixo de "Threshold - Hysteresis" (e o
+    tempo de Hold termina) o gate fecha.
 
-        MidiGate     : MIDI entra  ->  controla o volume do áudio
-        AudioTrigger : áudio entra ->  gera MIDI (Note On / Note Off)
+        abre   -> áudio sobe (Attack)  + MIDI Note On  (nota configurável)
+        fecha  -> áudio desce (Release) + MIDI Note Off
 
-    Quando o sinal de áudio passa de um limiar (threshold) o "gate abre" e o
-    plugin envia um Note On. Quando o sinal cai abaixo do limiar de fechamento,
-    envia o Note Off. O áudio passa pelo plugin sem nenhuma alteração.
+    CAMINHO DO SINAL
+    ----------------
 
-    PARA QUE SERVE
-    --------------
-    Tocar um instrumento (bateria sampleada, sintetizador...) a partir de um
-    áudio ao vivo, por exemplo o microfone ou o pad de um baterista.
+        Entrada ─┬─► [Lowpass/Highpass] ─► [Peak ou RMS] ─► Gate ─┐
+                 │                                                 │ ganho 0..1
+                 └─► [Pre-open: atraso] ──► Wet x ganho + Dry ─────┴─► Saída
+                                            + Noise x ganho
+
+    O detector vê o sinal SEM atraso e o áudio que sai está atrasado em
+    "Pre-open" ms. Por isso o gate já está aberto quando o golpe chega à saída.
 
     DOIS CAMINHOS PARA O MIDI SAIR DO PLUGIN
     ----------------------------------------
     1. Saída MIDI do próprio plugin (MidiBuffer). Funciona em DAWs que
-       encaminham a saída MIDI de plugins para outras trilhas (ex.: Reaper).
+       encaminham a saída MIDI de plugins (ex.: Reaper).
 
-    2. Porta MIDI virtual (CoreMIDI no macOS). O plugin cria uma porta chamada
-       "AudioTrigger Out". Uma trilha de instrumento do Logic Pro pode
-       receber MIDI dela. Este caminho existe porque o Logic não encaminha a
-       saída MIDI de plugins de áudio para outras trilhas.
+    2. Porta MIDI virtual (CoreMIDI no macOS) chamada "AudioTrigger Out".
+       Uma trilha de instrumento do Logic Pro pode receber MIDI dela. Existe
+       porque o Logic não encaminha a saída MIDI de plugins de áudio.
 
     REGRAS DE OURO DA THREAD DE ÁUDIO (processBlock)
     ------------------------------------------------
     - Sem locks, sem alocação de memória e sem chamadas de sistema.
-    - O envio para a porta virtual (que é uma chamada de sistema) NÃO é feito
-      na thread de áudio. O processBlock só coloca o evento numa fila sem lock
-      (juce::AbstractFifo) e uma thread separada faz o envio de fato.
+    - Todos os buffers (atraso, RMS) são criados em prepareToPlay().
+    - O envio para a porta virtual NÃO é feito na thread de áudio: o
+      processBlock só coloca o evento numa fila sem lock (juce::AbstractFifo)
+      e uma thread separada faz o envio.
 
   ==============================================================================
 */
@@ -47,21 +52,38 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <array>
 #include <atomic>
+#include <vector>
 
 //==============================================================================
 namespace TriggerParamIDs
 {
-    inline constexpr const char* threshold  = "threshold";   // dB: abre o gate
+    // Detector e envelope (como no ReaGate)
+    inline constexpr const char* threshold  = "threshold";   // dB
     inline constexpr const char* hysteresis = "hysteresis";  // dB abaixo do threshold: fecha
-    inline constexpr const char* release    = "release";     // ms: queda do detector
-    inline constexpr const char* lockout    = "lockout";     // ms: tempo mínimo entre disparos
-    inline constexpr const char* velWindow  = "velwindow";   // ms: janela para medir a força
-    inline constexpr const char* note       = "note";        // nota MIDI enviada
-    inline constexpr const char* channel    = "channel";     // canal MIDI (1..16)
+    inline constexpr const char* preOpen    = "preopen";     // ms de antecedência (atraso do áudio)
+    inline constexpr const char* attack     = "attack";      // ms
+    inline constexpr const char* hold       = "hold";        // ms
+    inline constexpr const char* release    = "release";     // ms
+    inline constexpr const char* lowpass    = "lowpass";     // Hz (filtro só do detector)
+    inline constexpr const char* highpass   = "highpass";    // Hz (0 = desligado)
+    inline constexpr const char* rmsSize    = "rms";         // ms (0 = detecção por pico)
+    inline constexpr const char* preview    = "preview";     // ouvir o sinal filtrado do detector
+
+    // Mix de saída
+    inline constexpr const char* wet        = "wet";         // dB (áudio gateado)
+    inline constexpr const char* dry        = "dry";         // dB (áudio direto)
+    inline constexpr const char* noise      = "noise";       // dB (ruído com o gate aberto)
+
+    // MIDI
+    inline constexpr const char* sendMidi   = "sendmidi";    // enviar MIDI ao abrir/fechar
+    inline constexpr const char* note       = "note";
+    inline constexpr const char* channel    = "channel";     // 1..16
     inline constexpr const char* velocity   = "velocity";    // 0 = pela amplitude, 1..127 = fixa
     inline constexpr const char* velLow     = "vellow";      // dB do pico que vira velocity 1
     inline constexpr const char* velHigh    = "velhigh";     // dB do pico que vira velocity 127
-    inline constexpr const char* velCurve   = "velcurve";    // formato da curva (1 = linear em dB)
+    inline constexpr const char* velCurve   = "velcurve";    // 1 = linear em dB
+    inline constexpr const char* velWindow  = "velwindow";   // ms para medir a força do golpe
+    inline constexpr const char* lockout    = "lockout";     // ms mínimos entre dois disparos
     inline constexpr const char* port       = "port";        // enviar à porta virtual?
 }
 
@@ -98,7 +120,8 @@ private:
 };
 
 //==============================================================================
-class TriggerAudioProcessor final : public juce::AudioProcessor
+class TriggerAudioProcessor final : public juce::AudioProcessor,
+                                    private juce::Timer
 {
 public:
     TriggerAudioProcessor();
@@ -137,45 +160,105 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
+    /** Roda na thread de mensagens (não é tempo real): informa à DAW a
+        latência causada pelo Pre-open. */
+    void timerCallback() override;
+
+    //==========================================================================
+    /** Filtro de 2ª ordem (Butterworth) só para o sinal do detector. */
+    struct Biquad
+    {
+        float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f;
+        float z1 = 0.0f, z2 = 0.0f;
+
+        void clear() noexcept { z1 = z2 = 0.0f; }
+
+        float process (float x) noexcept
+        {
+            const float y = b0 * x + z1;
+            z1 = b1 * x - a1 * y + z2;
+            z2 = b2 * x - a2 * y;
+            return y;
+        }
+
+        void setLowpass (double sampleRate, double frequency);
+        void setHighpass (double sampleRate, double frequency);
+    };
+
     //==========================================================================
     // Ponteiros para os valores atômicos dos parâmetros (leitura sem lock).
     std::atomic<float>* thresholdParam  = nullptr;
     std::atomic<float>* hysteresisParam = nullptr;
+    std::atomic<float>* preOpenParam    = nullptr;
+    std::atomic<float>* attackParam     = nullptr;
+    std::atomic<float>* holdParam       = nullptr;
     std::atomic<float>* releaseParam    = nullptr;
-    std::atomic<float>* lockoutParam    = nullptr;
-    std::atomic<float>* velWindowParam  = nullptr;
+    std::atomic<float>* lowpassParam    = nullptr;
+    std::atomic<float>* highpassParam   = nullptr;
+    std::atomic<float>* rmsParam        = nullptr;
+    std::atomic<float>* previewParam    = nullptr;
+    std::atomic<float>* wetParam        = nullptr;
+    std::atomic<float>* dryParam        = nullptr;
+    std::atomic<float>* noiseParam      = nullptr;
+    std::atomic<float>* sendMidiParam   = nullptr;
     std::atomic<float>* noteParam       = nullptr;
     std::atomic<float>* channelParam    = nullptr;
     std::atomic<float>* velocityParam   = nullptr;
     std::atomic<float>* velLowParam     = nullptr;
     std::atomic<float>* velHighParam    = nullptr;
     std::atomic<float>* velCurveParam   = nullptr;
+    std::atomic<float>* velWindowParam  = nullptr;
+    std::atomic<float>* lockoutParam    = nullptr;
     std::atomic<float>* portParam       = nullptr;
 
     //==========================================================================
-    // Máquina de estados do detector.
+    // Máquina de estados do gate.
     //
-    //   idle       : esperando o sinal passar do threshold
-    //   measuring  : passou do threshold; medindo o pico por alguns ms para
-    //                decidir a velocity (só quando a velocity é dinâmica)
-    //   open       : Note On enviado; esperando o sinal cair para enviar Note Off
-    enum class State { idle, measuring, open };
+    //   closed    : fechado (o áudio está em silêncio ou em release)
+    //   measuring : passou do threshold; medindo o pico por alguns ms para
+    //               decidir a velocity (só quando há MIDI com velocity pela
+    //               amplitude). O áudio já está abrindo.
+    //   open      : aberto (inclui o tempo de Hold depois que o nível caiu)
+    enum class State { closed, measuring, open };
 
-    State  state          = State::idle;
-    double sampleRate     = 44100.0;
-    float  envelope       = 0.0f;   // seguidor de pico (0..1)
-    float  windowPeak     = 0.0f;   // maior valor visto na janela de medição
-    int    windowLeft     = 0;      // amostras restantes da janela
-    int    lockoutLeft    = 0;      // amostras restantes do bloqueio
-    int    heldNote       = -1;     // nota do Note On atual (para o Note Off)
-    int    heldChannel    = 1;
+    State  state       = State::closed;
+    double sampleRate  = 44100.0;
 
-    // Pedido para fechar uma nota presa (ex.: o transporte parou). Pode ser
-    // feito por outra thread, por isso é atômico.
+    float  level       = 0.0f;   // nível do detector (pico ou RMS), 0..1
+    float  gateGain    = 0.0f;   // ganho do áudio, 0 (fechado) .. 1 (aberto)
+    float  windowPeak  = 0.0f;
+    int    windowLeft  = 0;
+    int    holdLeft    = 0;
+    int    lockoutLeft = 0;
+    int    heldNote    = -1;     // nota do Note On atual (para o Note Off)
+    int    heldChannel = 1;
+
+    // Filtros do detector (e os últimos valores aplicados, para só recalcular
+    // os coeficientes quando o usuário mexer no knob).
+    Biquad lowpassFilter, highpassFilter;
+    float  lastLowpassHz = -1.0f, lastHighpassHz = -1.0f;
+
+    // Janela RMS (soma móvel dos quadrados) com memória fixa.
+    std::vector<float> rmsBuffer;
+    double rmsSum        = 0.0;
+    int    rmsPos        = 0;
+    int    lastRmsLength = -1;
+
+    // Atraso do Pre-open: um buffer circular por canal.
+    std::array<std::vector<float>, 2> delayBuffer;
+    int delayPos = 0;
+
+    // Ganhos de saída suavizados (evitam estalo ao mexer nos knobs).
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wetGain, dryGain, noiseGain;
+
+    // Gerador de ruído (xorshift): leve e sem alocação.
+    juce::uint32 noiseState = 22222u;
+
+    // Pedido para zerar o estado e fechar a nota presa (ex.: transporte
+    // parou). Pode vir de outra thread, por isso é atômico.
     std::atomic<bool> pendingReset { false };
 
     //==========================================================================
-    // Porta virtual (pode ser nula se o sistema não permitir).
     std::unique_ptr<VirtualMidiPort> virtualPort;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TriggerAudioProcessor)

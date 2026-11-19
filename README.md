@@ -77,42 +77,48 @@ cmake --build build --config Release
 | Release | 1 a 5000 ms | 50 ms | Tempo de fechamento do gate |
 | Floor | -inf a 0 dB | -inf | Nível com o gate fechado |
 
-## AudioTrigger (áudio gera MIDI, em tempo real)
+## AudioTrigger (gate em tempo real que envia MIDI, no estilo do ReaGate)
 
-O inverso do MidiGate. Escuta o áudio ao vivo e, quando o sinal passa do
-threshold, envia um Note On. Quando o sinal cai, envia o Note Off. O áudio passa
-sem alteração. Serve para tocar um instrumento (por exemplo, uma bateria
-sampleada) a partir de um microfone ou pad ao vivo.
+Um gate completo, com o modelo do **ReaGate** do Reaper (que não existe no Logic
+Pro). Quando o sinal passa do threshold o gate abre: o áudio sobe e o plugin
+envia um **Note On** configurável. Quando o sinal cai, o gate fecha e o plugin
+envia o **Note Off**. A detecção é feita amostra por amostra.
 
-A detecção é feita amostra por amostra. Com velocity dinâmica o Note On sai
-cerca de 2 ms depois do golpe (a "Velocity Window", usada para medir a força).
-Com velocity fixa maior que 0, sai na própria amostra em que o sinal passa do
-threshold.
+| Grupo | Parâmetro | Função |
+|-------|-----------|--------|
+| Envelope | Threshold | Nível que abre o gate |
+| | Hysteresis | Quantos dB abaixo do threshold o gate fecha |
+| | Pre-open | Atrasa o áudio para o gate abrir antes do golpe (o plugin informa a latência à DAW) |
+| | Attack / Hold / Release | Tempos do envelope do áudio. O Hold mantém o gate aberto depois que o nível cai |
+| Detector | Lowpass / Highpass | Filtros só do sinal do detector. Útil para ignorar vazamento de outras peças |
+| | RMS size | 0 = detecção por pico. Acima de 0, usa o nível RMS nessa janela |
+| | Preview filter output | Você ouve o sinal filtrado do detector |
+| Saída | Wet / Dry / Noise | Mix do áudio gateado, do áudio direto e de ruído com o gate aberto |
+| MIDI | Send MIDI on open/close | Liga e desliga o envio de MIDI |
+| | Note / MIDI Channel | Nota e canal enviados |
+| | Fixed Velocity | 0 = a velocity vem da amplitude do golpe, 1 a 127 = fixa |
+| | Velocity Low / High / Curve | Pico em dB que vira velocity 1 e 127, e o formato da curva |
+| | Velocity Window | Tempo de medição do pico para calcular a velocity |
+| | Retrigger Lockout | Tempo mínimo entre dois disparos |
+| | Send to Virtual MIDI Port | Liga a porta virtual descrita abaixo |
 
-| Parâmetro | Função |
-|-----------|--------|
-| Threshold | Nível que abre o gate e dispara o Note On |
-| Hysteresis | Quantos dB abaixo do threshold o gate fecha (Note Off) |
-| Release | Velocidade com que o detector cai depois de um golpe |
-| Retrigger Lockout | Tempo mínimo entre dois disparos |
-| Velocity Window | Tempo de medição do pico para calcular a velocity |
-| Note / MIDI Channel | Nota e canal enviados |
-| Fixed Velocity | 0 = a velocity vem da amplitude do golpe, 1 a 127 = fixa |
-| Velocity Low | Pico em dB que vira velocity 1 |
-| Velocity High | Pico em dB que vira velocity 127 |
-| Velocity Curve | 1 = linear em dB. Menor que 1 reforça golpes fracos, maior que 1 exige golpes mais fortes |
-| Send to Virtual MIDI Port | Liga a porta virtual descrita abaixo |
+Com velocity pela amplitude, o Note On sai cerca de 2 ms depois do golpe (a
+Velocity Window). Com Fixed Velocity maior que 0, sai na própria amostra em que
+o sinal passa do threshold.
+
+Ainda não tem: a entrada de sidechain do detector (Detector input).
 
 ### Como o MIDI sai do plugin
 1. **Saída MIDI do plugin:** funciona em DAWs que encaminham a saída MIDI de
    plugins para outras trilhas (por exemplo, o Reaper).
-2. **Porta MIDI virtual (macOS):** o plugin cria a porta **AudioTrigger Out**.
-   No Logic Pro, uma trilha de instrumento recebe MIDI dessa porta (entrada
-   MIDI da trilha em "All" ou na porta). O Logic não encaminha a saída MIDI de
-   plugins de áudio para outras trilhas, e por isso existe esse caminho.
-   No Windows a porta virtual não é criada.
+2. **Porta MIDI virtual (macOS):** o plugin cria a porta **AudioTrigger Out**
+   (e **AudioTrigger Out 2**, e assim por diante, uma por instância). No Logic
+   Pro, uma trilha de instrumento recebe MIDI dessa porta. O Logic não
+   encaminha a saída MIDI de plugins de áudio para outras trilhas, e por isso
+   existe esse caminho. No Windows a porta virtual não é criada.
 
 ### Uso no Logic Pro
 1. Insira o **AudioTrigger** (Audio FX) na trilha de áudio com o sinal ao vivo.
 2. Crie uma trilha de instrumento com o som que deve ser tocado.
 3. Confirme que a trilha de instrumento recebe MIDI da porta **AudioTrigger Out**.
+4. Se quiser só o MIDI e não o áudio do gate, ponha **Wet** em -inf.
