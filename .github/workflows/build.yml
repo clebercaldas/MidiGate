@@ -23,8 +23,17 @@ jobs:
       - name: Validar os Audio Units (não bloqueia o build se falhar)
         continue-on-error: true
         run: |
-          auval -v aumf Mgat Rgrj
-          auval -v aufx Atrg Rgrj
+          # O macOS leva alguns segundos para registrar plugins recém-instalados.
+          # Reinicia o registrador e espera os dois aparecerem na lista.
+          killall -9 AudioComponentRegistrar || true
+          for i in $(seq 1 12); do
+            if auval -a | grep -q "Mgat" && auval -a | grep -q "Atrg"; then break; fi
+            sleep 5
+          done
+          rc=0
+          auval -v aumf Mgat Rgrj || rc=1
+          auval -v aufx Atrg Rgrj || rc=1
+          exit $rc
 
       - name: Compactar os plugins (ditto preserva os pacotes do macOS)
         run: |
