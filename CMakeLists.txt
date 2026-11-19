@@ -20,11 +20,16 @@ project(MidiGate VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Formatos gerados. AU só existe no macOS; em outros sistemas geramos só VST3.
+# Formatos gerados. AU só existe no macOS; em Windows e Linux geramos só VST3.
+# A cópia automática para a pasta de plugins só é ligada no macOS, porque no
+# Windows a pasta padrão do VST3 (C:\Program Files\Common Files\VST3) exige
+# permissão de administrador e faria o build falhar.
 if(APPLE)
     set(MIDIGATE_FORMATS AU VST3)
+    set(MIDIGATE_COPY_AFTER_BUILD TRUE)
 else()
     set(MIDIGATE_FORMATS VST3)
+    set(MIDIGATE_COPY_AFTER_BUILD FALSE)
 endif()
 
 # --- Download do JUCE ---------------------------------------------------------
@@ -64,9 +69,9 @@ juce_add_plugin(MidiGate
     AU_MAIN_TYPE            kAudioUnitType_MusicEffect
     VST3_CATEGORIES         Fx Dynamics
 
-    # Copia o plugin para ~/Library/Audio/Plug-Ins/{Components,VST3}
+    # No macOS, copia o plugin para ~/Library/Audio/Plug-Ins/{Components,VST3}
     # automaticamente após cada build.
-    COPY_PLUGIN_AFTER_BUILD TRUE
+    COPY_PLUGIN_AFTER_BUILD ${MIDIGATE_COPY_AFTER_BUILD}
 )
 
 target_sources(MidiGate

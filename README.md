@@ -47,6 +47,20 @@ Também ficam em `build/MidiGate_artefacts/Release/`.
 Se a DAW não enxergar o AU novo, rode `killall -9 AudioComponentRegistrar`
 e reabra a DAW.
 
+## Windows (VST3)
+
+O GitHub Actions também compila o VST3 para Windows. Baixe `MidiGate-Windows`
+na aba Actions, extraia o zip e copie a pasta `MidiGate.vst3` para
+`C:\Program Files\Common Files\VST3`. Depois peça à DAW para
+reescanear os plugins.
+
+Para compilar localmente no Windows (Visual Studio 2022 e CMake instalados):
+
+```
+cmake -B build
+cmake --build build --config Release
+```
+
 ## Uso
 
 - **Logic Pro:** o AU é do tipo *MIDI-controlled effect* (`aumf`). Insira-o

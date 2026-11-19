@@ -1,13 +1,14 @@
-# Compila o MidiGate (AU + VST3) em um Mac virtual do GitHub.
+# Compila o MidiGate em Mac virtual (AU + VST3) e em Windows virtual (VST3).
 # Roda a cada envio (push) e também manualmente, pela aba "Actions".
-name: Build MidiGate (macOS)
+name: Build MidiGate
 
 on:
   push:
   workflow_dispatch:
 
 jobs:
-  build:
+  macos:
+    name: macOS (AU + VST3)
     runs-on: macos-latest
     steps:
       - name: Baixar o código
@@ -33,4 +34,29 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MidiGate-macOS
+          path: dist/*.zip
+
+  windows:
+    name: Windows (VST3)
+    runs-on: windows-latest
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Configurar (baixa o JUCE na primeira vez)
+        run: cmake -B build
+
+      - name: Compilar em Release
+        run: cmake --build build --config Release
+
+      - name: Compactar o plugin
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path build/MidiGate_artefacts/Release/VST3/MidiGate.vst3 -DestinationPath dist/MidiGate-VST3-Windows.zip
+
+      - name: Publicar o arquivo para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: MidiGate-Windows
           path: dist/*.zip
