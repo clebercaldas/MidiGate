@@ -58,7 +58,10 @@ namespace TriggerParamIDs
     inline constexpr const char* velWindow  = "velwindow";   // ms: janela para medir a força
     inline constexpr const char* note       = "note";        // nota MIDI enviada
     inline constexpr const char* channel    = "channel";     // canal MIDI (1..16)
-    inline constexpr const char* velocity   = "velocity";    // 0 = dinâmica, 1..127 = fixa
+    inline constexpr const char* velocity   = "velocity";    // 0 = pela amplitude, 1..127 = fixa
+    inline constexpr const char* velLow     = "vellow";      // dB do pico que vira velocity 1
+    inline constexpr const char* velHigh    = "velhigh";     // dB do pico que vira velocity 127
+    inline constexpr const char* velCurve   = "velcurve";    // formato da curva (1 = linear em dB)
     inline constexpr const char* port       = "port";        // enviar à porta virtual?
 }
 
@@ -144,6 +147,9 @@ private:
     std::atomic<float>* noteParam       = nullptr;
     std::atomic<float>* channelParam    = nullptr;
     std::atomic<float>* velocityParam   = nullptr;
+    std::atomic<float>* velLowParam     = nullptr;
+    std::atomic<float>* velHighParam    = nullptr;
+    std::atomic<float>* velCurveParam   = nullptr;
     std::atomic<float>* portParam       = nullptr;
 
     //==========================================================================

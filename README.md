@@ -97,7 +97,10 @@ threshold.
 | Retrigger Lockout | Tempo mínimo entre dois disparos |
 | Velocity Window | Tempo de medição do pico para calcular a velocity |
 | Note / MIDI Channel | Nota e canal enviados |
-| Fixed Velocity | 0 = acompanha a força do golpe, 1 a 127 = fixa |
+| Fixed Velocity | 0 = a velocity vem da amplitude do golpe, 1 a 127 = fixa |
+| Velocity Low | Pico em dB que vira velocity 1 |
+| Velocity High | Pico em dB que vira velocity 127 |
+| Velocity Curve | 1 = linear em dB. Menor que 1 reforça golpes fracos, maior que 1 exige golpes mais fortes |
 | Send to Virtual MIDI Port | Liga a porta virtual descrita abaixo |
 
 ### Como o MIDI sai do plugin

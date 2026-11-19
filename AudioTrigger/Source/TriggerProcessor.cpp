@@ -20,6 +20,9 @@ namespace
     constexpr float releaseMinMs = 1.0f, releaseMaxMs = 500.0f,       releaseDefMs = 30.0f;
     constexpr float lockoutMaxMs = 500.0f,                            lockoutDefMs = 20.0f;
     constexpr float velWindowMaxMs = 10.0f,                           velWindowDefMs = 2.0f;
+    constexpr float velLowMinDb = -60.0f, velLowMaxDb = -1.0f,        velLowDefDb = -30.0f;
+    constexpr float velHighMinDb = -30.0f, velHighMaxDb = 0.0f,       velHighDefDb = -3.0f;
+    constexpr float velCurveMin = 0.3f, velCurveMax = 3.0f,           velCurveDef = 1.0f;
     constexpr int   noteDef = 36;      // C1: o bumbo na maioria dos kits GM
     constexpr int   firstVirtualPortId = 1;
 
@@ -112,10 +115,14 @@ TriggerAudioProcessor::TriggerAudioProcessor()
     noteParam       = apvts.getRawParameterValue (TriggerParamIDs::note);
     channelParam    = apvts.getRawParameterValue (TriggerParamIDs::channel);
     velocityParam   = apvts.getRawParameterValue (TriggerParamIDs::velocity);
+    velLowParam     = apvts.getRawParameterValue (TriggerParamIDs::velLow);
+    velHighParam    = apvts.getRawParameterValue (TriggerParamIDs::velHigh);
+    velCurveParam   = apvts.getRawParameterValue (TriggerParamIDs::velCurve);
     portParam       = apvts.getRawParameterValue (TriggerParamIDs::port);
 
     jassert (thresholdParam && hysteresisParam && releaseParam && lockoutParam && velWindowParam
-             && noteParam && channelParam && velocityParam && portParam);
+             && noteParam && channelParam && velocityParam && velLowParam && velHighParam
+             && velCurveParam && portParam);
 
     const int n = portInstanceCounter.fetch_add (1);
     const juce::String portName = n == firstVirtualPortId ? juce::String ("AudioTrigger Out")
@@ -175,9 +182,28 @@ TriggerAudioProcessor::createParameterLayout()
     layout.add (std::make_unique<IntParam> (
         juce::ParameterID { TriggerParamIDs::channel, 1 }, "MIDI Channel", 1, 16, 1));
 
-    // 0 = a velocity acompanha a força do golpe. 1..127 = valor fixo.
+    // 0 = a velocity vem da amplitude do golpe. 1..127 = valor fixo.
     layout.add (std::make_unique<IntParam> (
-        juce::ParameterID { TriggerParamIDs::velocity, 1 }, "Fixed Velocity (0 = dynamic)", 0, 127, 0));
+        juce::ParameterID { TriggerParamIDs::velocity, 1 }, "Fixed Velocity (0 = from amplitude)", 0, 127, 0));
+
+    // Conversão amplitude -> velocity: o pico em "Velocity Low" vira 1 e o pico
+    // em "Velocity High" vira 127. Entre os dois a velocity cresce em dB.
+    layout.add (std::make_unique<FloatParam> (
+        juce::ParameterID { TriggerParamIDs::velLow, 1 }, "Velocity Low (peak -> 1)",
+        juce::NormalisableRange<float> (velLowMinDb, velLowMaxDb, 0.1f),
+        velLowDefDb, Attr().withLabel ("dB")));
+
+    layout.add (std::make_unique<FloatParam> (
+        juce::ParameterID { TriggerParamIDs::velHigh, 1 }, "Velocity High (peak -> 127)",
+        juce::NormalisableRange<float> (velHighMinDb, velHighMaxDb, 0.1f),
+        velHighDefDb, Attr().withLabel ("dB")));
+
+    // Curva: 1 = linear. Menor que 1 deixa golpes fracos mais fortes;
+    // maior que 1 exige golpes mais fortes para chegar à velocity máxima.
+    layout.add (std::make_unique<FloatParam> (
+        juce::ParameterID { TriggerParamIDs::velCurve, 1 }, "Velocity Curve",
+        juce::NormalisableRange<float> (velCurveMin, velCurveMax, 0.01f),
+        velCurveDef));
 
     layout.add (std::make_unique<BoolParam> (
         juce::ParameterID { TriggerParamIDs::port, 1 }, "Send to Virtual MIDI Port", true));
@@ -272,12 +298,19 @@ void TriggerAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         heldNote = -1;
     };
 
-    // Converte o pico medido em velocity: threshold -> 1, 0 dBFS -> 127.
+    // Converte o pico medido (amplitude) em velocity MIDI:
+    //   pico <= Velocity Low  -> 1
+    //   pico >= Velocity High -> 127
+    //   entre os dois         -> cresce linearmente em dB, moldado pela curva.
+    const float velLowDb  = velLowParam->load();
+    const float velHighDb = juce::jmax (velHighParam->load(), velLowDb + 1.0f);
+    const float velCurve  = velCurveParam->load();
+
     auto velocityFromPeak = [&] (float peak)
     {
         const float peakDb = juce::Decibels::gainToDecibels (peak, -100.0f);
-        const float span   = juce::jmax (1.0f, -thresholdDb);
-        const float t      = juce::jlimit (0.0f, 1.0f, (peakDb - thresholdDb) / span);
+        float t = juce::jlimit (0.0f, 1.0f, (peakDb - velLowDb) / (velHighDb - velLowDb));
+        t = std::pow (t, velCurve); // roda uma vez por golpe, não por amostra
         return juce::jlimit (1, 127, 1 + (int) std::lround (126.0f * t));
     };
 
